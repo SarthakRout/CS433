@@ -1,3 +1,7 @@
+/*
+To Run:
+g++  -std=c++1y -fopenmp ./omp_main_lock.cpp ./sync_library.hpp -o ./omp_main_lock; ./omp_main_lock
+*/
 #include<iostream>
 #include<fstream>
 #include<chrono>

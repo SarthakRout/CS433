@@ -12,19 +12,27 @@ using namespace std;
 *************************************************
 */
 #define MFENCE asm volatile ("mfence" ::: "memory")
+/*
+BAKERY_LOCK = Lamport's Bakery Lock
+SPIN_LOCK = Spin-Lock 
+TTS_LOCK = Test-and-test-and-set lock
+TICKET_LOCK = Ticket Lock
+ARRAY_LOCK = Array Lock
+*/
 enum LockType {BAKERY_LOCK = 0, SPIN_LOCK, TTS_LOCK, TICKET_LOCK, ARRAY_LOCK, MUTEX, SEMAP};
 
 // ----------------------------------------------
 // ---------- LAMPORT'S BAKERY LOCK -------------
 // ----------------------------------------------
 const int P_MAX = 128;
+// Extra 16 to align it cache lines and avoid false sharing.
 struct BakeryLock {
     int dummy[16];
     int P[16];
     int choosing[P_MAX][16];
     int ticket[P_MAX][16];
 };
-
+// Initialise Bakery Lock
 void Init_Bakery(struct BakeryLock* lbl, int P){
     if(P > P_MAX){
         cout<<"Maximum number of threads is 128.";
@@ -36,6 +44,7 @@ void Init_Bakery(struct BakeryLock* lbl, int P){
         lbl->ticket[i][0] = 0;
     }
 }
+// Acquire Bakery Lock
 void Acquire_Bakery(struct BakeryLock* lbl, int& tid){
     lbl->choosing[tid][0] = 1;
     MFENCE;
@@ -60,6 +69,7 @@ void Acquire_Bakery(struct BakeryLock* lbl, int& tid){
         );
     }
 }
+// Release Bakery Lock
 void Release_Bakery(struct BakeryLock* lbl, int tid){
     MFENCE;
     lbl->ticket[tid][0] = 0;
@@ -72,6 +82,7 @@ void Release_Bakery(struct BakeryLock* lbl, int tid){
 struct SpinLock {
     int lock;
 };
+// From the slides
 unsigned char CompareAndSet(int oldVal, int newVal, int *ptr) {
     int oldValOut;
     unsigned char result;
@@ -81,22 +92,15 @@ unsigned char CompareAndSet(int oldVal, int newVal, int *ptr) {
                 : );
     return result;
 }
-
-// unsigned char CompareAndSet(int oldVal, int newVal, int* ptr){
-//     unsigned char result;
-//     asm volatile ("lock cmpxchgl %2, %1 \n setzb %0"
-//         :"=qm"(result),  "+m" (*ptr)
-//         :"r" (newVal)
-//         : );
-//     return result;
-// }
-
+// Initialize SpinLock
 void Init_Spin(struct SpinLock* sl){
     sl->lock = 0;
 }
+// Acquire SpinLock
 void Acquire_Spin(struct SpinLock* sl){
     while(!CompareAndSet(0, 1, &(sl->lock)));
 }
+// Release SpinLock
 void Release_Spin(struct SpinLock* sl){
     sl->lock = 0;
 }
@@ -108,11 +112,11 @@ void Release_Spin(struct SpinLock* sl){
 struct TTSLock {
     int lock;
 };
-
+// Initialize Test-and-test-and-set Lock
 void Init_TTS(struct TTSLock* ttsl){
     ttsl->lock = 0;
 }
-
+// Self implemented TestAndSet function using xchg instruction
 int TestAndSet(int* ptr, int setVal){
     asm volatile (
         "lock xchg %0, %1"
@@ -122,6 +126,7 @@ int TestAndSet(int* ptr, int setVal){
     );
     return setVal;
 }
+// Acquire TTS Lock
 void Acquire_TTS(struct TTSLock* ttsl){
     while( 
         ttsl->lock 
@@ -135,6 +140,7 @@ void Acquire_TTS(struct TTSLock* ttsl){
         continue;
     }
 }
+// Release TTS Lock
 void Release_TTS(struct TTSLock* ttsl){
     ttsl->lock = 0;
 }
@@ -147,6 +153,7 @@ struct TicketLock {
     int ticket;
     int released;
 };
+// Self implemented FetchAndInc with xadd instruction
 int FetchAndInc(int* ticket){
     int result = 1;
     asm volatile(
@@ -157,15 +164,17 @@ int FetchAndInc(int* ticket){
     );
     return result;
 }
+// Initialize Ticket Lock
 void Init_Ticket(struct TicketLock* tl){
     tl->ticket = 0;
     tl->released = 0;
 }
+// Acquire Ticket Lock
 void Acquire_Ticket(struct TicketLock* tl){
     int ticket = FetchAndInc(&(tl->ticket));
-    // MFENCE;
     while(tl->released != ticket);
 }
+// Release Ticket Lock
 void Release_Ticket(struct TicketLock* tl){
     tl->released++;
 }
@@ -174,12 +183,13 @@ void Release_Ticket(struct TicketLock* tl){
 // ----------------------------------------------
 // ---------- ARRAY LOCK ------------------------
 // ----------------------------------------------
+// Padding to avoid false sharing
 struct ArrayLock {
     int P[16];
     int next[16];
     char avail[P_MAX][64];
 };
-
+// Initialize Array Lock
 void Init_Array(struct ArrayLock* al, int num_threads){
     al->P[0] = num_threads;
     al->next[0] = 0;
@@ -188,32 +198,33 @@ void Init_Array(struct ArrayLock* al, int num_threads){
     }
     al->avail[0][0] = 1;
 }
+// Acquire Array Lock
 void Acquire_Array(struct ArrayLock* al, int& tid){
     tid = FetchAndInc(&(al->next[0]))%(al->P[0]);
     while(al->avail[tid][0] != 1);
-
 } 
+// Release Array Lock
 void Release_Array(struct ArrayLock* al, int& tid){
     al->avail[tid][0] = 0;
     al->avail[(tid+1)%(al->P[0])][0] = 1;
 }
-
 // ----------------------------------------------
 
 // ----------------------------------------------
 // ---------- PTHREAD_MUTEX ---------------------
 // ----------------------------------------------
-
 struct MutexLock {
     pthread_mutex_t lock;
 };
-
+// Initialize PThread Mutex Lock
 void Init_Mutex(struct MutexLock * ml){
     pthread_mutex_init(&(ml->lock), NULL);
 }
+// Acquire PThread Mutex Lock
 void Acquire_Mutex(struct MutexLock * ml){
     pthread_mutex_lock(&(ml->lock));
 }
+// Release PThread Mutex Lock
 void Release_Mutex(struct MutexLock * ml){
     pthread_mutex_unlock(&(ml->lock));
 }
@@ -225,24 +236,28 @@ void Release_Mutex(struct MutexLock * ml){
 struct SemLock {
     sem_t sem;
 };
+// Initialize Binary Semaphore
 void Init_Sem(struct SemLock* sl){
     sem_init(&(sl->sem), 0, 1);
 }
+// Acquire Binary Semaphore
 void Acquire_Sem(struct SemLock* sl){
     sem_wait(&(sl->sem));
 }
+// Release Binary Semaphore
 void Release_Sem(struct SemLock* sl){
     sem_post(&(sl->sem));
 }
 // ----------------------------------------------
 
 // ---------- WRAPPER STRUCT FOR LOCK -----------
+// Padding for the lock structure
 struct Lock {
     int lock_type[16];
     void* lock[16];
 };
 
-// ---------- GENERAL FUNCTION FOR LOCK_INIT ---
+// ---------- GENERAL FUNCTION FOR LOCK_INIT ----
 struct Lock* Init(int lock_type, int num_threads){
     void* core_lock = NULL;
     switch (lock_type){
@@ -374,7 +389,7 @@ void Release(struct Lock* lock, int& tid){
     }
 }
 
-// ---------- GENERAL FUNCTION FOR FREEING LOCK --
+// ---------- GENERAL FUNCTION FOR FREEING THE LOCK -
 void Free(struct Lock* lock){
     switch (lock->lock_type[0]){ 
         case BAKERY_LOCK: {
@@ -423,6 +438,13 @@ void Free(struct Lock* lock){
 *************************************************
 */
 
+/*
+CENTRAL_BUSY = Centralized sense-reversing barrier using busy-wait
+TREE_BUSY = Tree Barrier using busy-wait on flags
+CENTRAL_CONDV = Centralized barrier using POSIX Condition Variable
+TREE_CONDV = Tree Barrier using POSIX Condition Variable
+POSIX_BARRIER = Posix Barrier Interface
+*/
 enum BarrierType {CENTRAL_BUSY=0, TREE_BUSY, CENTRAL_CONDV, TREE_CONDV, POSIX_BARRIER};
 
 // ----------------------------------------------
@@ -434,12 +456,15 @@ struct CentralBusy {
     int flag;
     pthread_mutex_t lock;
 };
+// Initialize CentralBusy Barrier (Sense Reversing)
 void Init_CentralBusy(struct CentralBusy* cb, int num_threads) {
     cb->flag = 0;
     pthread_mutex_init(&(cb->lock), NULL);
     cb->ctr = 0;
     cb->P = num_threads;
 }
+// Set CentralBusy Barrier (Sense Reversing)
+// From slides
 void Set_CentralBusy(struct CentralBusy * cb, int* sense){
     *sense = 1 - *sense;
     pthread_mutex_lock(&(cb->lock));
@@ -460,8 +485,9 @@ void Set_CentralBusy(struct CentralBusy * cb, int* sense){
 // ----------------------------------------------
 struct TreeBusy {
     int P;
-    int flag[P_MAX][16];
+    int flag[P_MAX][16]; //Here 16 is required due to log(P) possible depths
 };
+// Initialize Tree Barrier with busy wait
 void Init_TreeBusy(struct TreeBusy * tb, int num_threads){
     tb->P = num_threads;
     for(int i = 0; i<tb->P; i++){
@@ -470,6 +496,8 @@ void Init_TreeBusy(struct TreeBusy * tb, int num_threads){
         }
     }
 }
+// Set Tree Barrier with busy wait
+// From slides
 void Set_TreeBusy(struct TreeBusy * tb, int tid){
     unsigned int i, mask;
     for(i =0, mask = 1; (mask & tid) !=0; ++i, mask <<= 1){
@@ -490,20 +518,21 @@ void Set_TreeBusy(struct TreeBusy * tb, int tid){
 // ----------------------------------------------
 // ---------- CENTRAL_CONDV ---------------------
 // ----------------------------------------------
-
 struct CentralCondv{
     int ctr;
     pthread_mutex_t lock;
     pthread_cond_t cv;
     int P;
 };
-
+// Initialize central sense reversing using POSIX condition variable
+// From slides
 void Init_CentralCondv(struct CentralCondv* cc, int num_threads){
     pthread_mutex_init(&(cc->lock), NULL);
     pthread_cond_init(&(cc->cv), NULL);
     cc->ctr = 0;
     cc->P = num_threads;
 }
+// Set Central sense reversing using POSIX condition variable
 void Set_CentralCondv(struct CentralCondv* cc){
     pthread_mutex_lock(&(cc->lock));
     cc->ctr++;
@@ -515,22 +544,21 @@ void Set_CentralCondv(struct CentralCondv* cc){
     }
     pthread_mutex_unlock(&(cc->lock));
 }
-
 // ----------------------------------------------
 
 // ----------------------------------------------
 // ---------- TREE_CONDV ------------------------
 // ----------------------------------------------
 struct TreeNodeCondv{
-    int flag[16][16];
-    pthread_cond_t cv[16][16];
-    pthread_mutex_t lock[16][16];
+    int flag[16][16]; // Here 16 is also used for log(P) factor and to also avoid false sharing
+    pthread_cond_t cv[16][16]; // Size of pthread_cond_t is ~48 bytes; 3 could also work to avoid false sharing
+    pthread_mutex_t lock[16][16]; // Size of pthread_mutex_t is ~40 bytes; 8 could also work.
 };
 struct TreeCondv {
     struct TreeNodeCondv nodes[P_MAX];
     int P;
 };
-
+// Initialize Tree barrier using POSIX Condition Variable.
 void Init_TreeCondv(struct TreeCondv * tc, int num_threads){
     tc->P = num_threads;
     for(int i = 0; i<tc->P; i++){
@@ -541,6 +569,7 @@ void Init_TreeCondv(struct TreeCondv * tc, int num_threads){
         }
     }
 }
+// Set Tree Barrier using POSIX Condition Variable
 void Set_TreeCondv(struct TreeCondv* tc, int tid){
     unsigned int i, mask;
     for(i =0, mask = 1; (mask & tid) !=0; ++i, mask <<= 1){
@@ -552,9 +581,6 @@ void Set_TreeCondv(struct TreeCondv* tc, int tid){
         pthread_mutex_unlock(&(tc->nodes[tid].lock[i][0]));
     }
     if(tid < tc->P - 1){
-        // if(!FetchAndInc(&tc->nodes[tid+mask].flag[i][0])){
-        //     pthread_cond_signal(&(tc->nodes[tid+mask].cv[i][0]));
-        // }
         if(!tc->nodes[tid+mask].flag[i][0]){
             pthread_mutex_lock(&(tc->nodes[tid+mask].lock[i][0]));
             tc->nodes[tid+mask].flag[i][0] = 1;
@@ -582,25 +608,26 @@ void Set_TreeCondv(struct TreeCondv* tc, int tid){
 // ----------------------------------------------
 // ---------- POSIX_BARRIER ---------------------
 // ----------------------------------------------
-
 struct PosixBarrier {
     pthread_barrier_t barrier;
 };
-
-void Init_Posix(struct PosixBarrier* pb){
-    pthread_barrier_init(&(pb->barrier), NULL, 0);
+// Initialize POSIX Barrier with num_threads threads
+void Init_Posix(struct PosixBarrier* pb, int num_threads){
+    pthread_barrier_init(&(pb->barrier), NULL, num_threads);
 }
-
+// Set POSIX Barrier
 void Set_Posix(struct PosixBarrier* pb){
     pthread_barrier_wait(&(pb->barrier));
 }
 // ----------------------------------------------
 
+// ---------- WRAPPER STRUCT FOR BARRIER  -------
+// Padding for the barrier structure
 struct Barrier {
     int barrier_type[16];
     void* barrier[16];
 };
-
+// -- GENERAL FUNCTION TO INITIALIZE BARRIER ----
 struct Barrier* Init_Barrier(int barrier_type, int num_threads){
     void * core_barrier = NULL;
     switch (barrier_type) {
@@ -630,7 +657,7 @@ struct Barrier* Init_Barrier(int barrier_type, int num_threads){
         }
         case POSIX_BARRIER: {
             struct PosixBarrier* pb = (struct PosixBarrier*)(malloc(sizeof(PosixBarrier)));
-            Init_Posix(pb);
+            Init_Posix(pb, num_threads);
             core_barrier = (void*)pb;
             break;
         }
@@ -640,7 +667,7 @@ struct Barrier* Init_Barrier(int barrier_type, int num_threads){
     barrier->barrier[0] = core_barrier;
     return barrier;
 }
-
+// ----- GENERAL FUNCTION TO SET BARRIER ----
 void Set_Barrier(struct Barrier* bar, int * sense, int tid){
     switch (bar->barrier_type[0]) {
         case CENTRAL_BUSY: {
@@ -665,11 +692,11 @@ void Set_Barrier(struct Barrier* bar, int * sense, int tid){
         }
     }
 }
-
+// -- GENERAL FUNCTION TO FREE BARRIER -------
 void Free_Barrier(struct Barrier* bar){
     switch (bar->barrier_type[0]) {
         case CENTRAL_BUSY: {
-            pthread_barrier_destroy(&(((struct CentralBusy*)(bar->barrier[0]))->lock));
+            pthread_mutex_destroy(&(((struct CentralBusy*)(bar->barrier[0]))->lock));
             free((struct CentralBusy *)bar->barrier[0]);
             break;
         }
@@ -678,7 +705,7 @@ void Free_Barrier(struct Barrier* bar){
             break;
         }
         case CENTRAL_CONDV: {
-            pthread_barrier_destroy(&(((struct CentralCondv*)(bar->barrier[0]))->lock));
+            pthread_mutex_destroy(&(((struct CentralCondv*)(bar->barrier[0]))->lock));
             pthread_cond_destroy(&(((struct CentralCondv*)(bar->barrier[0]))->cv));
             free((struct CentralCondv*)bar->barrier[0]);
             break;

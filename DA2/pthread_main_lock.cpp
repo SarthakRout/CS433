@@ -1,3 +1,6 @@
+/* To run the program:
+g++ -std=c++1y -lpthread ./pthread_main_lock.cpp ./sync_library.hpp -o ./pthread_main_lock; ./pthread_main_lock
+*/
 #include<iostream>
 #include<chrono>
 #include<fstream>
@@ -26,12 +29,12 @@ void* critical(void* arg){
 
 int main(){
     // Choose number of threads. (Please keep it less than 128.)
-    const int num_threads = 6;
+    const int num_threads = 8;
     /* Use
     BAKERY_LOCK, SPIN_LOCK, TTS_LOCK, TICKET_LOCK, ARRAY_LOCK, MUTEX, SEMAP
     as the first argument to the Init function
     */
-    lock = Init(SPIN_LOCK, num_threads);
+    lock = Init(MUTEX, num_threads);
 
     //Start measuring time
     auto solve_start = std::chrono::high_resolution_clock::now();

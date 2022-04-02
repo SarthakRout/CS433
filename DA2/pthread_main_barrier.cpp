@@ -1,3 +1,7 @@
+/*
+To run:
+g++ -std=c++1y -lpthread ./pthread_main_barrier.cpp ./sync_library.hpp -o ./pthread_main_barrier; ./pthread_main_barrier
+*/
 #include<iostream>
 #include<chrono>
 #include<fstream>
@@ -8,13 +12,12 @@
 
 using namespace std; 
 
-const int N = 1e4;
+const int N = 1e5;
 struct Barrier* barrier = NULL;
 void* critical(void* arg){
     int tid = (int)(long long)arg;
     int local_sense = 0; // For CENTRAL_BUSY;
     for(int i = 0; i<N; i++){
-        // cout<<tid<<" "<<i<<"\n"<<flush;
         Set_Barrier(barrier, &local_sense, tid);
     }
     return NULL;
@@ -27,7 +30,7 @@ int main(){
     CENTRAL_BUSY, TREE_BUSY, CENTRAL_CONDV, TREE_CONDV, POSIX_BARRIER
     as the first argument to the Init_Barrier function
     */
-    barrier = Init_Barrier(TREE_CONDV, num_threads);
+    barrier = Init_Barrier(POSIX_BARRIER, num_threads);
 
     //Start measuring time
     auto solve_start = std::chrono::high_resolution_clock::now();
